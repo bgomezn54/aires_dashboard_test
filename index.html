@@ -201,6 +201,13 @@
         }
 
         elConn.textContent = "Connecting to Secure MQTT WebSocket...";
+        
+        // PULL THE AWS IOT LIBRARY OUT OF THE BACKGROUND
+        const awsIot = require('aws-iot-device-sdk');
+
+        // 3. Connect to AWS IoT Core
+        const mqttClient = awsIot.device({
+            region: AWS.config.region,
 
         // 3. Connect to AWS IoT Core
         const mqttClient = awsIot.device({
