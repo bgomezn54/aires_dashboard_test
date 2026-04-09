@@ -3,8 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <title>AIRES Global Cloud Dashboard</title>
+  
   <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1390.0.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/aws-iot-device-sdk@1.0.14/browser/aws-iot-sdk-browser-bundle.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
@@ -89,6 +91,7 @@
   </div>
 
   <script>
+    // 1. Element Selectors
     const elConn = document.getElementById('connStatus');
     const elPm25 = document.getElementById('pm25Filtered'), elVoc = document.getElementById('vocIndex');
     const elNox = document.getElementById('noxIndex'), elTempF = document.getElementById('tempF');
@@ -100,6 +103,7 @@
     const MAX_POINTS = 50; 
     let chartTime = 0;
 
+    // 2. Chart Configurations
     function baseLineOptions(titleY, minY, maxY) {
       return {
         animation:false, responsive:true,
@@ -128,6 +132,7 @@
       chart.update('none');
     }
 
+    // 3. Logic Helpers
     function getPmLabel(val) { if(val<12) return 'normal'; if(val<35) return 'medium'; if(val<55) return 'high'; return 'dangerous'; }
     function getVocLabel(val) { if(val<140) return 'normal'; if(val<190) return 'medium'; if(val<240) return 'high'; return 'dangerous'; }
     function getNoxLabel(val) { if(val<140) return 'normal'; if(val<200) return 'medium'; if(val<280) return 'high'; return 'dangerous'; }
@@ -146,6 +151,29 @@
         pushPoint(chartTemp, [data.temp_f]); pushPoint(chartFan, [data.fan]);
     }
 
+    // 4. Secure Signing Helper (Signature V4)
+    function getSignedUrl(endpoint, region, credentials) {
+        const datetime = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
+        const date = datetime.substr(0, 8);
+        const method = 'GET';
+        const service = 'iotdevicegateway';
+        const host = endpoint.toLowerCase();
+        const path = '/mqtt';
+        const query = `X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=${credentials.accessKeyId}%2F${date}%2F${region}%2F${service}%2Faws4_request&X-Amz-Date=${datetime}&X-Amz-Expires=86400&X-Amz-SignedHeaders=host`;
+        
+        const canonicalRequest = `${method}\n${path}\n${query}\nhost:${host}\n\nhost\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`;
+        const stringToSign = `AWS4-HMAC-SHA256\n${datetime}\n${date}/${region}/${service}/aws4_request\n${CryptoJS.SHA256(canonicalRequest).toString()}`;
+        
+        const kDate = CryptoJS.HmacSHA256(date, "AWS4" + credentials.secretKey);
+        const kRegion = CryptoJS.HmacSHA256(region, kDate);
+        const kService = CryptoJS.HmacSHA256(service, kRegion);
+        const kSigning = CryptoJS.HmacSHA256("aws4_request", kService);
+        const signature = CryptoJS.HmacSHA256(stringToSign, kSigning).toString();
+        
+        return `wss://${host}${path}?${query}&X-Amz-Signature=${signature}&X-Amz-Security-Token=${encodeURIComponent(credentials.sessionToken)}`;
+    }
+
+    // 5. AWS Connection Initialization
     AWS.config.region = 'us-west-2';
     AWS.config.credentials = new AWS.CognitoIdentityCredentials({
         IdentityPoolId: 'us-west-2:770d786c-9f6e-43d6-956e-3f59c0057ec8',
@@ -153,35 +181,41 @@
 
     AWS.config.credentials.get(function(err) {
         if (err) {
-            elConn.textContent = "Auth Error. Check Console.";
+            elConn.textContent = "Auth Error: Check Identity Pool ID";
             elConn.style.background = "#ff0000";
             return;
         }
-        elConn.textContent = "Connecting to Secure MQTT WebSocket...";
+
+        const iotEndpoint = 'a1hdvz5vhv22bb-ats.iot.us-west-2.amazonaws.com';
         
-        // Use the global AWSIoT provided by the bundle
-        const mqttClient = AWSIoT.device({
-            region: AWS.config.region,
-            host: 'a1hdvz5vhv22bb-ats.iot.us-west-2.amazonaws.com',
-            clientId: 'aires-web-' + Math.floor(Math.random() * 1000000),
-            protocol: 'wss',
+        // Generate the Signed URL for WebSockets
+        const signedUrl = getSignedUrl(iotEndpoint, 'us-west-2', {
             accessKeyId: AWS.config.credentials.accessKeyId,
             secretKey: AWS.config.credentials.secretAccessKey,
             sessionToken: AWS.config.credentials.sessionToken
         });
-      
-        mqttClient.on('connect', function() {
+
+        // Use MQTT.js for the connection
+        const client = mqtt.connect(signedUrl);
+
+        client.on('connect', function () {
             elConn.textContent = "LIVE: Secure AWS Bridge Active";
             elConn.style.background = "#12331f";
-            mqttClient.subscribe('aires/sensors');
+            client.subscribe('aires/sensors');
         });
 
-        mqttClient.on('message', function(topic, payload) {
+        client.on('message', function (topic, payload) {
             const sensorData = JSON.parse(payload.toString());
             handleIncomingData(sensorData);
         });
 
-        mqttClient.on('offline', function() {
+        client.on('error', function (error) {
+            console.error("MQTT Connection Error:", error);
+            elConn.textContent = "Connection Failed";
+            elConn.style.background = "#4b1515";
+        });
+        
+        client.on('close', function () {
             elConn.textContent = "Disconnected - Retrying...";
             elConn.style.background = "#4b1515";
         });
