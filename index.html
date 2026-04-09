@@ -201,16 +201,9 @@
         }
 
         elConn.textContent = "Connecting to Secure MQTT WebSocket...";
-        
-        // PULL THE AWS IOT LIBRARY OUT OF THE BACKGROUND
-        const awsIot = require('aws-iot-device-sdk');
 
         // 3. Connect to AWS IoT Core
-        const mqttClient = awsIot.device({
-            region: AWS.config.region,
-
-        // 3. Connect to AWS IoT Core
-        const mqttClient = awsIot.device({
+        const mqttClient = AWSIoT.device({
             region: AWS.config.region,
             host: 'a1hdvz5vhv22bb-ats.iot.us-west-2.amazonaws.com',
             clientId: 'aires-web-' + Math.floor(Math.random() * 1000000),
@@ -219,7 +212,7 @@
             secretKey: AWS.config.credentials.secretAccessKey,
             sessionToken: AWS.config.credentials.sessionToken
         });
-
+      
         // 4. Handle Connection Success
         mqttClient.on('connect', function() {
             elConn.textContent = "LIVE: Secure AWS Bridge Active";
